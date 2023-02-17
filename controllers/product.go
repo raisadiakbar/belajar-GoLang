@@ -6,8 +6,9 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/example/app/models"
-	"github.com/example/app/utils"
+	"github.com/raisadiakbar/belajar-GoLang/models"
+
+	"github.com/raisadiakbar/belajar-GoLang/utils"
 )
 
 // Create a new product

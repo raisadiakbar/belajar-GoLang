@@ -1,4 +1,4 @@
-package controller
+package controllers
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
 
-	"your-app-name/model"
-	"your-app-name/repository"
+	"github.com/raisadiakbar/belajar-GoLang/models"
+	"github.com/raisadiakbar/belajar-GoLang/repository"
 )
 
 type AuthController struct{}
@@ -19,7 +19,7 @@ var authRepository = repository.AuthRepository{}
 
 // Register a new user
 func (ac AuthController) Register(w http.ResponseWriter, r *http.Request) {
-	user := model.User{}
+	user := models.User{}
 	err := json.NewDecoder(r.Body).Decode(&user)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
@@ -53,7 +53,7 @@ func (ac AuthController) Register(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// create a new store for the user
-	store := model.Store{UserID: user.ID}
+	store := models.Store{UserID: user.ID}
 	if err = repository.StoreRepository{}.Create(&store); err != nil {
 		respondWithError(w, http.StatusInternalServerError, err.Error())
 		return
@@ -64,7 +64,7 @@ func (ac AuthController) Register(w http.ResponseWriter, r *http.Request) {
 
 // Login user
 func (ac AuthController) Login(w http.ResponseWriter, r *http.Request) {
-	loginRequest := model.LoginRequest{}
+	loginRequest := models.LoginRequest{}
 	err := json.NewDecoder(r.Body).Decode(&loginRequest)
 	if err != nil {
 		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
@@ -105,4 +105,10 @@ func registerHandler(w http.ResponseWriter, r *http.Request) {
 func loginHandler(w http.ResponseWriter, r *http.Request) {
 	ac := AuthController{}
 	ac.Login(w, r)
+}
+
+// Login and register routes
+func AuthRoutes(r *mux.Router) {
+	r.HandleFunc("/api/auth/register", registerHandler).Methods("POST")
+	r.HandleFunc("/api/auth/login", loginHandler).Methods("POST")
 }
