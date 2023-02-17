@@ -6,9 +6,9 @@ import (
 	"strconv"
 
 	"github.com/gorilla/mux"
-	"gorm.io/gorm"
+	"github.com/jinzhu/gorm"
 
-	"your-module/models"
+	"github.com/raisadiakbar/belajar-GoLang/models"
 )
 
 // CreateCategoryRequest struct
