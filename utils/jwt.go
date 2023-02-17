@@ -1,88 +1,96 @@
-package controllers
+package utils
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"net/http"
-	"os"
-	"strconv"
 	"strings"
 	"time"
 
-	jwt "github.com/dgrijalva/jwt-go"
+	"github.com/dgrijalva/jwt-go"
 )
 
-func CreateToken(user_id uint32) (string, error) {
-	claims := jwt.MapClaims{}
-	claims["authorized"] = true
-	claims["user_id"] = user_id
-	claims["exp"] = time.Now().Add(time.Hour * 1).Unix() //Token expires after 1 hour
+var jwtKey = []byte("secret_key")
+
+type Claims struct {
+	Username string `json:"username"`
+	jwt.StandardClaims
+}
+
+// GenerateJWT generates a JWT token for the given username
+func GenerateJWT(username string) (string, error) {
+	expirationTime := time.Now().Add(15 * time.Minute)
+
+	claims := &Claims{
+		Username: username,
+		StandardClaims: jwt.StandardClaims{
+			ExpiresAt: expirationTime.Unix(),
+		},
+	}
+
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(os.Getenv("API_SECRET")))
 
-}
-
-func TokenValid(r *http.Request) error {
-	tokenString := ExtractToken(r)
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
-		}
-		return []byte(os.Getenv("API_SECRET")), nil
-	})
+	tokenString, err := token.SignedString(jwtKey)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if claims, ok := token.Claims.(jwt.MapClaims); ok && token.Valid {
-		Pretty(claims)
-	}
-	return nil
+
+	return tokenString, nil
 }
 
-func ExtractToken(r *http.Request) string {
-	keys := r.URL.Query()
-	token := keys.Get("token")
-	if token != "" {
-		return token
-	}
-	bearerToken := r.Header.Get("Authorization")
-	if len(strings.Split(bearerToken, " ")) == 2 {
-		return strings.Split(bearerToken, " ")[1]
-	}
-	return ""
+type response struct {
+	Message string `json:"message"`
 }
 
-func ExtractTokenID(r *http.Request) (uint32, error) {
+func RespondWithError(w http.ResponseWriter, status int, message string) {
+	resp := response{Message: message}
+	jsonResp, _ := json.Marshal(resp)
 
-	tokenString := ExtractToken(r)
-	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-		if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
-			return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+	w.WriteHeader(status)
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonResp)
+}
+
+// Authenticate middleware validates the JWT token in the request header
+func Authenticate(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		authHeader := r.Header.Get("Authorization")
+		if authHeader == "" {
+			RespondWithError(w, http.StatusUnauthorized, "Missing Authorization header")
+			return
 		}
-		return []byte(os.Getenv("API_SECRET")), nil
-	})
-	if err != nil {
-		return 0, err
-	}
-	claims, ok := token.Claims.(jwt.MapClaims)
-	if ok && token.Valid {
-		uid, err := strconv.ParseUint(fmt.Sprintf("%.0f", claims["user_id"]), 10, 32)
+
+		tokenString := strings.Replace(authHeader, "Bearer ", "", 1)
+
+		claims := &Claims{}
+
+		token, err := jwt.ParseWithClaims(tokenString, claims, func(token *jwt.Token) (interface{}, error) {
+			if token.Method != jwt.SigningMethodHS256 {
+				return nil, fmt.Errorf("Unexpected signing method: %v", token.Header["alg"])
+			}
+
+			return jwtKey, nil
+		})
+
 		if err != nil {
-			return 0, err
+			if errors.Is(err, jwt.ErrSignatureInvalid) {
+				RespondWithError(w, http.StatusUnauthorized, "Invalid token signature")
+			} else {
+				RespondWithError(w, http.StatusUnauthorized, "Invalid token")
+			}
+			return
 		}
-		return uint32(uid), nil
-	}
-	return 0, nil
-}
 
-// Pretty display the claims licely in the terminal
-func Pretty(data interface{}) {
-	b, err := json.MarshalIndent(data, "", " ")
-	if err != nil {
-		log.Println(err)
-		return
-	}
+		if !token.Valid {
+			RespondWithError(w, http.StatusUnauthorized, "Token is not valid")
+			return
+		}
 
-	fmt.Println(string(b))
+		ctx := r.Context()
+		ctx = context.WithValue(ctx, "user", claims.Username)
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+
 }
