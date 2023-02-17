@@ -1,11 +1,29 @@
-package main
+package controllers
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 )
+
+type User struct {
+	ID        uint      `gorm:"primary_key" json:"id"`
+	Name      string    `json:"name"`
+	Email     string    `json:"email" gorm:"unique"`
+	Password  string    `json:"-"`
+	Phone     string    `json:"phone" gorm:"unique"`
+	Address   string    `json:"address,omitempty" gorm:"foreignkey:UserID"`
+	Store     string    `json:"store,omitempty" gorm:"foreignkey:UserID"`
+	Role      string    `json:"role" gorm:"default:'user'"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
+type contextKey string
+
+const userIDContextKey contextKey = "userID"
 
 // getAccountHandler is the handler for GET /api/accounts/me.
 func getAccountHandler(w http.ResponseWriter, r *http.Request) {
@@ -44,11 +62,11 @@ func updateAccountHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Ensure that user ID in request body matches user ID in context.
-	if updatedUser.ID != userID {
-		http.Error(w, "invalid user ID", http.StatusBadRequest)
-		return
-	}
+	// // Ensure that user ID in request body matches user ID in context.
+	// if updatedUser.ID != userID {
+	// 	http.Error(w, "invalid user ID", http.StatusBadRequest)
+	// 	return
+	// }
 
 	// Retrieve existing user from database.
 	existingUser, err := getUserByID(userID)
