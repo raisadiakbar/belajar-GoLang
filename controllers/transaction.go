@@ -1,4 +1,4 @@
-package controller
+package controllers
 
 import (
 	"encoding/json"
@@ -7,14 +7,14 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/myusername/go-rest-api/model"
+	"github.com/raisadiakbar/belajar-GoLang/models"
 )
 
 // createTransactionHandler is used to create a new transaction
 func createTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	// Parse JSON request body
 	decoder := json.NewDecoder(r.Body)
-	var transaction model.Transaction
+	var transaction models.Transaction
 	err := decoder.Decode(&transaction)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -38,7 +38,7 @@ func createTransactionHandler(w http.ResponseWriter, r *http.Request) {
 // getTransactionListHandler is used to get a list of all transactions
 func getTransactionListHandler(w http.ResponseWriter, r *http.Request) {
 	// Get transactions from database
-	transactions, err := model.GetAllTransactions()
+	transactions, err := models.GetAllTransactions()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -69,7 +69,7 @@ func getTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get transaction from database
-	transaction, err := model.GetTransactionByID(uint(id))
+	transaction, err := models.GetTransactionByID(uint(id))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -104,7 +104,7 @@ func confirmTransactionHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Get transaction from database
-	transaction, err := model.GetTransactionByID(uint(id))
+	transaction, err := models.GetTransactionByID(uint(id))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
