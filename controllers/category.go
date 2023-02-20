@@ -8,7 +8,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/gorm"
 
-	"github.com/raisadiakbar/belajar-GoLang/models"
+	models "e-GoLang/models"
 )
 
 // CreateCategoryRequest struct
@@ -114,11 +114,16 @@ func updateCategoryHandler(w http.ResponseWriter, r *http.Request) {
 
 	// get the id from the request params
 	params := mux.Vars(r)
-	id := params["id"]
+	idStr := params["ID"]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Invalid category ID", http.StatusBadRequest)
+		return
+	}
 
 	// decode the request body into a Category model
 	var category models.Category
-	err := json.NewDecoder(r.Body).Decode(&category)
+	err = json.NewDecoder(r.Body).Decode(&category)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -140,10 +145,15 @@ func deleteCategoryHandler(w http.ResponseWriter, r *http.Request) {
 
 	// get the id from the request params
 	params := mux.Vars(r)
-	id := params["id"]
+	idStr := params["id"]
+	id, err := strconv.Atoi(idStr)
+	if err != nil {
+		http.Error(w, "Invalid category ID", http.StatusBadRequest)
+		return
+	}
 
 	// delete the category with the given id
-	err := models.DeleteCategory(id)
+	err = models.DeleteCategory(id)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -152,3 +162,17 @@ func deleteCategoryHandler(w http.ResponseWriter, r *http.Request) {
 	// return a success message
 	json.NewEncoder(w).Encode(map[string]string{"message": "Category deleted"})
 }
+
+// func route() {
+// 	r := mux.NewRouter()
+
+// 	// Category routes
+// 	r.HandleFunc("/api/categories", createCategoryHandler).Methods("POST")
+// 	r.HandleFunc("/api/categories", getCategoryListHandler).Methods("GET")
+// 	r.HandleFunc("/api/categories/{id}", getCategoryHandler).Methods("GET")
+// 	r.HandleFunc("/api/categories/{id}", updateCategoryHandler).Methods("PUT")
+// 	r.HandleFunc("/api/categories/{id}", deleteCategoryHandler).Methods("DELETE")
+
+// 	// Serve the API
+// 	http.ListenAndServe(":8000", r)
+// }
