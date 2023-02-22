@@ -7,6 +7,9 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/mysql"
+
 	"github.com/dgrijalva/jwt-go"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
 	"golang.org/x/crypto/bcrypt"
@@ -14,8 +17,19 @@ import (
 
 type AuthController struct{}
 
+var DB *gorm.DB
+
+func connectDB() (*gorm.DB, error) {
+	db, err := gorm.Open("mysql", "root:Password@(localhost)/project-golang?charset=utf8&parseTime=True&loc=Local")
+	if err != nil {
+		return nil, err
+	}
+
+	return db, nil
+}
+
 func isEmailExist(email string) bool {
-	db, err := DB.connectDB()
+	db, err := connectDB()
 	defer db.Close()
 
 	var count int
