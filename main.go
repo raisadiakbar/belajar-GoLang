@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	"os"
+
 	"github.com/dgrijalva/jwt-go"
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/gorm"
@@ -20,16 +22,25 @@ import (
 var DB *gorm.DB
 
 func connectDB() (*gorm.DB, error) {
-	db, err := gorm.Open("mysql", "root:Password@(localhost)/project-golang?charset=utf8&parseTime=True&loc=Local")
+	dbConn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8&parseTime=True&loc=Local",
+		os.Getenv("DB_USERNAME"),
+		os.Getenv("DB_PASSWORD"),
+		os.Getenv("DB_HOST"),
+		os.Getenv("DB_PORT"),
+		os.Getenv("DB_DATABASE"),
+	)
+	db, err := gorm.Open(os.Getenv("DB_CONNECTION"), dbConn)
 	if err != nil {
 		return nil, err
 	}
-
 	return db, nil
 }
 
-func CloseDB() {
-	DB.Close()
+func CloseDB(db *gorm.DB) {
+	err := db.Close()
+	if err != nil {
+		log.Fatal("Error closing database connection")
+	}
 	fmt.Println("Successfully closed database connection")
 }
 
@@ -82,7 +93,7 @@ func main() {
 	r.HandleFunc("/api/transactions/{id}/confirm", confirmTransactionHandler).Methods("POST")
 
 	// Serve the API
-	log.Fatal(http.ListenAndServe(":8080", r))
+	log.Fatal(http.ListenAndServe(":8888", r))
 }
 
 type User struct {
