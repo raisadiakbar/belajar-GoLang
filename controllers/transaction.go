@@ -6,8 +6,9 @@ import (
 	"strconv"
 	"time"
 
+	models "e-GoLang/models"
+
 	"github.com/gorilla/mux"
-	"github.com/raisadiakbar/belajar-GoLang/models"
 )
 
 // createTransactionHandler is used to create a new transaction

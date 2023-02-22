@@ -1,8 +1,34 @@
 package model
 
 import (
+	"errors"
+	"net/http"
+	"strconv"
 	"time"
+
+	"fmt"
+
+	"github.com/jinzhu/gorm"
+	_ "github.com/jinzhu/gorm/dialects/mysql"
 )
+
+var DB *gorm.DB
+
+func ConnectDB() {
+	var err error
+	DB, err = gorm.Open("mysql", "root:Password@(localhost)/project-golang?charset=utf8&parseTime=True&loc=Local")
+
+	if err != nil {
+		fmt.Println("Failed to connect to database:", err)
+	} else {
+		fmt.Println("Successfully connected to database")
+	}
+}
+
+func CloseDB() {
+	DB.Close()
+	fmt.Println("Successfully closed database connection")
+}
 
 type User struct {
 	ID        uint      `gorm:"primary_key" json:"id"`
@@ -81,3 +107,75 @@ type LogProduct struct {
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }
+
+// Deklarasi fungsi GetProductQueryParams
+func GetProductQueryParams(r *http.Request) (int, int, error) {
+	// Mendapatkan nilai dari parameter "limit"
+	limitParam := r.URL.Query().Get("limit")
+
+	// Mengkonversi nilai "limit" menjadi integer
+	limit, err := strconv.Atoi(limitParam)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	// Mendapatkan nilai dari parameter "page"
+	pageParam := r.URL.Query().Get("page")
+
+	// Mengkonversi nilai "page" menjadi integer
+	page, err := strconv.Atoi(pageParam)
+	if err != nil {
+		return 0, 0, err
+	}
+
+	return limit, page, nil
+}
+
+// UpdateAddress updates the given address in the database.
+func UpdateAddress(id int, address *Address) error {
+	return DB.Model(&Address{}).Where("id = ?", id).Updates(address).Error
+}
+
+var ErrAddressNotFound = errors.New("address not found")
+
+func DeleteAddress(id int) error {
+	result := DB.Delete(&Address{}, id)
+	if result.Error != nil {
+		if result.RecordNotFound() {
+			return ErrAddressNotFound
+		}
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrAddressNotFound
+	}
+	return nil
+}
+
+func UpdateCategory(id int, category *Category) error {
+	result := DB.Model(&Category{}).Where("id = ?", id).Updates(category)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("category not found")
+	}
+	return nil
+}
+
+// DeleteCategory deletes a category with the given ID from the database.
+func DeleteCategory(id int) error {
+	result := DB.Delete(&Category{}, id)
+	if result.Error != nil {
+		if result.RecordNotFound() {
+			return ErrCategoryNotFound
+		}
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}
+
+var ErrCategoryNotFound = errors.New("category not found")

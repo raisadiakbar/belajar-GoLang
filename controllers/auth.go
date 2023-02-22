@@ -2,113 +2,164 @@ package controllers
 
 import (
 	"encoding/json"
+	"errors"
+	"log"
 	"net/http"
-
-	"golang.org/x/crypto/bcrypt"
+	"time"
 
 	"github.com/dgrijalva/jwt-go"
-	"github.com/gorilla/mux"
-
-	"github.com/raisadiakbar/belajar-GoLang/models"
-	"github.com/raisadiakbar/belajar-GoLang/repository"
+	_ "github.com/jinzhu/gorm/dialects/mysql"
+	"golang.org/x/crypto/bcrypt"
 )
 
 type AuthController struct{}
 
-var authRepository = repository.AuthRepository{}
+func isEmailExist(email string) bool {
+	db, err := DB.connectDB()
+	defer db.Close()
 
-// Register a new user
-func (ac AuthController) Register(w http.ResponseWriter, r *http.Request) {
-	user := models.User{}
-	err := json.NewDecoder(r.Body).Decode(&user)
+	var count int
+	err = db.Raw("SELECT count(*) FROM users WHERE email=?", email).Scan(&count).Error
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
-		return
+		log.Fatal(err)
 	}
-
-	if err = user.Validate(); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	// check if email already exists
-	if authRepository.EmailExists(user.Email) {
-		respondWithError(w, http.StatusBadRequest, "Email already exists")
-		return
-	}
-
-	// check if phone number already exists
-	if authRepository.PhoneExists(user.Phone) {
-		respondWithError(w, http.StatusBadRequest, "Phone number already exists")
-		return
-	}
-
-	// hash the password before storing in the database
-	hashedPassword, _ := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
-	user.Password = string(hashedPassword)
-
-	if err = authRepository.Create(&user); err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// create a new store for the user
-	store := models.Store{UserID: user.ID}
-	if err = repository.StoreRepository{}.Create(&store); err != nil {
-		respondWithError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	respondWithJSON(w, http.StatusCreated, map[string]string{"message": "User created successfully"})
+	return count > 0
 }
 
-// Login user
-func (ac AuthController) Login(w http.ResponseWriter, r *http.Request) {
-	loginRequest := models.LoginRequest{}
-	err := json.NewDecoder(r.Body).Decode(&loginRequest)
+func isPhoneExist(phone string) bool {
+	db, err := connectDB()
 	if err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
-		return
+		log.Fatal(err)
 	}
+	defer db.Close()
 
-	// get user with given email
-	user, err := authRepository.FindByEmail(loginRequest.Email)
+	var count int
+	row := db.Raw("SELECT count(*) FROM users WHERE phone=?", phone).Row()
+	row.Scan(&count)
+
+	return count > 0
+}
+
+func createUser(user User) error {
+	db, err := connectDB()
+	defer db.Close()
+
 	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Invalid email or password")
-		return
+		return err
 	}
 
-	// check if password is correct
-	if err = bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(loginRequest.Password)); err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Invalid email or password")
-		return
+	if isEmailExist(user.Email) {
+		return errors.New("Email already exists")
 	}
 
-	// generate token
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"user_id": user.ID,
-	})
+	if isPhoneExist(user.Phone) {
+		return errors.New("Phone already exists")
+	}
+
+	if result := db.Exec("INSERT INTO users(name, email, phone, password) VALUES (?, ?, ?, ?)", user.Name, user.Email, user.Phone, user.Password); result.Error != nil {
+		return result.Error
+	}
+
+	return nil
+}
+
+func getUserByEmail(email string) (*User, error) {
+	db, err := connectDB()
+	if err != nil {
+		return nil, err
+	}
+	defer db.Close()
+
+	var user User
+	if err := db.Where("email = ?", email).First(&user).Error; err != nil {
+		return nil, err
+	}
+	return &user, nil
+}
+
+func generateToken(userID int64) (string, error) {
+	token := jwt.New(jwt.SigningMethodHS256)
+	claims := token.Claims.(jwt.MapClaims)
+	claims["user_id"] = userID
+	claims["exp"] = time.Now().Add(time.Hour * 24).Unix()
 	tokenString, err := token.SignedString([]byte("secret"))
 	if err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Error generating token")
-		return
+		return "", err
 	}
-
-	respondWithJSON(w, http.StatusOK, map[string]string{"token": tokenString})
+	return tokenString, nil
 }
 
 func registerHandler(w http.ResponseWriter, r *http.Request) {
-	ac := AuthController{}
-	ac.Register(w, r)
+	// ambil data yang diberikan oleh user pada body request
+	var user User
+	err := json.NewDecoder(r.Body).Decode(&user)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// cek apakah email atau no telepon sudah terdaftar
+	if isEmailExist(user.Email) {
+		http.Error(w, "Email already exist", http.StatusBadRequest)
+		return
+	}
+	if isPhoneExist(user.Phone) {
+		http.Error(w, "Phone already exist", http.StatusBadRequest)
+		return
+	}
+
+	// hash password
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	user.Password = string(hashedPassword)
+
+	// simpan data user ke database
+	err = createUser(user)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// kirim response ke user
+	w.WriteHeader(http.StatusCreated)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "User created"})
 }
 
 func loginHandler(w http.ResponseWriter, r *http.Request) {
-	ac := AuthController{}
-	ac.Login(w, r)
-}
+	// ambil data yang diberikan oleh user pada body request
+	var user User
+	err := json.NewDecoder(r.Body).Decode(&user)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
-// Login and register routes
-func AuthRoutes(r *mux.Router) {
-	r.HandleFunc("/api/auth/register", registerHandler).Methods("POST")
-	r.HandleFunc("/api/auth/login", loginHandler).Methods("POST")
+	// cek apakah email atau no telepon terdaftar
+	userData, err := getUserByEmail(user.Email)
+	if err != nil {
+		http.Error(w, "Invalid email or password", http.StatusBadRequest)
+		return
+	}
+
+	// bandingkan password yang diberikan oleh user dengan password yang tersimpan di database
+	err = bcrypt.CompareHashAndPassword([]byte(userData.Password), []byte(user.Password))
+	if err != nil {
+		http.Error(w, "Invalid email or password", http.StatusBadRequest)
+		return
+	}
+
+	// generate token JWT
+	token, err := generateToken(int64(userData.ID))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// kirim response ke user
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"token": token})
 }

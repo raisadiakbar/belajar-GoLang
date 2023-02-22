@@ -6,49 +6,72 @@ import (
 
 	"github.com/gorilla/mux"
 
-	"github.com/raisadiakbar/belajar-GoLang/models"
-
-	"github.com/raisadiakbar/belajar-GoLang/utils"
+	"e-GoLang/models"
 )
+
+func RespondWithJSON(w http.ResponseWriter, payload interface{}) {
+	response, err := json.Marshal(payload)
+
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		w.Write([]byte("Error while encoding response to JSON"))
+		return
+	}
+
+	w.Write(response)
+}
 
 // Create a new product
 func createProductHandler(w http.ResponseWriter, r *http.Request) {
 	// Validate user input
 	var newProduct models.Product
-	err := json.NewDecoder(r.Body).Decode(&newProduct)
+	decoder := json.NewDecoder(r.Body)
+	err := decoder.Decode(&newProduct)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
+		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if err = newProduct.Validate(); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, err.Error())
+	if err = models.ValidateProduct(&newProduct); err != nil {
+		RespondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// Create the new product
 	if err := models.CreateProduct(&newProduct); err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, err.Error())
+		RespondWithError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Send the response
-	utils.RespondWithJSON(w, http.StatusCreated, newProduct)
+	// Set response status code
+	w.WriteHeader(http.StatusOK)
 }
 
 // Get a list of all products
 func getProductListHandler(w http.ResponseWriter, r *http.Request) {
-	// Retrieve query parameters for pagination and filtering
-	limit, offset, nameFilter := utils.GetProductQueryParams(r)
-
-	// Retrieve the products
-	products, err := models.GetProductList(limit, offset, nameFilter)
+	limit, page, err := models.GetProductQueryParams(r)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, err.Error())
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	// Send the response
-	utils.RespondWithJSON(w, http.StatusOK, products)
+	products, err := models.GetProductList(limit, page)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Mengkonversi hasil query menjadi format JSON
+	jsonBytes, err := json.Marshal(products)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Set header Content-Type sebagai application/json
+	w.Header().Set("Content-Type", "application/json")
+
+	// Mengembalikan hasil query sebagai response
+	w.Write(jsonBytes)
 }
 
 // Get a product by ID
@@ -60,12 +83,12 @@ func getProductHandler(w http.ResponseWriter, r *http.Request) {
 	// Retrieve the product
 	product, err := models.GetProduct(productID)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusNotFound, "Product not found")
+		RespondWithError(w, http.StatusNotFound, "Product not found")
 		return
 	}
 
-	// Send the response
-	utils.RespondWithJSON(w, http.StatusOK, product)
+	// Set response status code
+	w.WriteHeader(http.StatusOK)
 }
 
 // Update a product by ID
@@ -78,36 +101,21 @@ func updateProductHandler(w http.ResponseWriter, r *http.Request) {
 	var updatedProduct models.Product
 	err := json.NewDecoder(r.Body).Decode(&updatedProduct)
 	if err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
+		RespondWithError(w, http.StatusBadRequest, "Invalid request payload")
 		return
 	}
-	if err = updatedProduct.Validate(); err != nil {
-		utils.RespondWithError(w, http.StatusBadRequest, err.Error())
+	if err = models.ValidateProduct(&updatedProduct); err != nil {
+		RespondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
 	// Update the product
 	if err := models.UpdateProduct(productID, &updatedProduct); err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, err.Error())
+		RespondWithError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 
-	// Send the response
-	utils.RespondWithJSON(w, http.StatusOK, updatedProduct)
-}
 
-// Delete a product by ID
-func deleteProductHandler(w http.ResponseWriter, r *http.Request) {
-	// Retrieve the product ID from the URL parameter
-	vars := mux.Vars(r)
-	productID := vars["id"]
+	// Set response status code
+	w.WriteHeader(http.StatusOK)
 
-	// Delete the product
-	if err := models.DeleteProduct(productID); err != nil {
-		utils.RespondWithError(w, http.StatusInternalServerError, err.Error())
-		return
-	}
-
-	// Send the response
-	utils.RespondWithJSON(w, http.StatusOK, map[string]string{"result": "success"})
-}

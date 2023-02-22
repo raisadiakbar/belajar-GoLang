@@ -1,4 +1,4 @@
-package config
+package DB
 
 import (
 	"fmt"
@@ -9,15 +9,13 @@ import (
 
 var DB *gorm.DB
 
-func ConnectDB() {
-	var err error
-	DB, err = gorm.Open("mysql", "root:Password@(localhost)/project-golang?charset=utf8&parseTime=True&loc=Local")
-
+func connectDB() (*gorm.DB, error) {
+	db, err := gorm.Open("mysql", "root:Password@(localhost)/project-golang?charset=utf8&parseTime=True&loc=Local")
 	if err != nil {
-		fmt.Println("Failed to connect to database:", err)
-	} else {
-		fmt.Println("Successfully connected to database")
+		return nil, err
 	}
+
+	return db, nil
 }
 
 func CloseDB() {
