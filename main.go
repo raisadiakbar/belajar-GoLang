@@ -16,12 +16,14 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/jinzhu/gorm"
 	_ "github.com/jinzhu/gorm/dialects/mysql"
+	"github.com/joho/godotenv"
 	"golang.org/x/crypto/bcrypt"
 )
 
 var DB *gorm.DB
 
 func connectDB() (*gorm.DB, error) {
+	err := godotenv.Load()
 	dbConn := fmt.Sprintf("%s:%s@tcp(%s:%s)/%s?charset=utf8&parseTime=True&loc=Local",
 		os.Getenv("DB_USERNAME"),
 		os.Getenv("DB_PASSWORD"),
@@ -31,8 +33,9 @@ func connectDB() (*gorm.DB, error) {
 	)
 	db, err := gorm.Open(os.Getenv("DB_CONNECTION"), dbConn)
 	if err != nil {
-		return nil, err
+		log.Fatal("Error loading .env file")
 	}
+
 	return db, nil
 }
 
