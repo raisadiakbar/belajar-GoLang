@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/dgrijalva/jwt-go"
@@ -146,6 +148,7 @@ type Transaction struct {
 	Quantity        uint      `json:"quantity"`
 	TotalPrice      uint      `json:"total_price"`
 	AddressID       uint      `json:"address_id"`
+	Status          string    `json:"status"`
 	TransactionTime time.Time `json:"transaction_time"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
@@ -345,65 +348,510 @@ func updateAccountHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func createAddressHandler(w http.ResponseWriter, r *http.Request) {
-	// Parse request body
-	var address models.Address
+	// Dekode request body ke dalam objek model `Address`
+	var address Address
 	if err := json.NewDecoder(r.Body).Decode(&address); err != nil {
-		respondWithError(w, http.StatusBadRequest, "Invalid request payload")
+		// Jika terjadi masalah saat dekode request body, kirim pesan kesalahan dengan status 400 Bad Request
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "Gagal memproses request body: %v", err)
 		return
 	}
 
-	// Validate request body
-	if err := validate.Struct(address); err != nil {
-		respondWithError(w, http.StatusBadRequest, err.Error())
+	// Simpan alamat baru ke dalam database
+	if err := DB.Create(&address).Error; err != nil {
+		// Jika terjadi masalah saat menyimpan data, kirim pesan kesalahan dengan status 500 Internal Server Error
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "Gagal menyimpan alamat baru: %v", err)
 		return
 	}
 
-	// Get user ID from token
-	userID, err := getUserIDFromToken(r)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Invalid token")
-		return
-	}
-
-	// Check if address already exists for user
-	if _, err := services.GetAddressByUserIDAndLabel(userID, address.Label); err == nil {
-		respondWithError(w, http.StatusBadRequest, fmt.Sprintf("Address with label '%s' already exists", address.Label))
-		return
-	}
-
-	// Create address
-	if err := services.CreateAddress(userID, &address); err != nil {
-		respondWithError(w, http.StatusInternalServerError, "Failed to create address")
-		return
-	}
-
-	// Respond with created address
-	respondWithJSON(w, http.StatusCreated, address)
+	// Jika penyimpanan berhasil, kirim response dengan status 201 Created dan data alamat yang baru saja ditambahkan
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(address)
 }
 
 func getAddressHandler(w http.ResponseWriter, r *http.Request) {
-	// Get user ID from token
-	userID, err := getUserIDFromToken(r)
-	if err != nil {
-		respondWithError(w, http.StatusUnauthorized, "Invalid token")
+	// Dapatkan id dari URL parameter
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	// Inisialisasi objek model `Address`
+	var address Address
+
+	// Cari alamat dengan id yang diberikan dari database
+	if err := DB.First(&address, id).Error; err != nil {
+		// Jika alamat tidak ditemukan, kirim pesan kesalahan dengan status 404 Not Found
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, "Alamat dengan id %s tidak ditemukan", id)
 		return
 	}
 
-	// Get address ID from URL parameter
-	vars := mux.Vars(r)
-	addressID := vars["id"]
+	// Jika alamat ditemukan, kirim response dengan data alamat yang ditemukan
+	json.NewEncoder(w).Encode(address)
+}
 
-	// Get address by ID
-	address, err := services.GetAddressByUserIDAndID(userID, addressID)
+// Get user ID from JWT
+func getUserIdFromToken(w http.ResponseWriter, r *http.Request) int {
+	// Parse JWT from Authorization header
+	tokenString := r.Header.Get("Authorization")
+	if tokenString == "" {
+		http.Error(w, "Missing Authorization header", http.StatusUnauthorized)
+		return 0
+	}
+	tokenString = strings.ReplaceAll(tokenString, "Bearer ", "")
+	token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		return []byte("my-secret-key"), nil
+	})
 	if err != nil {
-		if err == gorm.ErrRecordNotFound {
-			respondWithError(w, http.StatusNotFound, "Address not found")
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return 0
+	}
+
+	// Get user ID from token claims
+	claims, ok := token.Claims.(jwt.MapClaims)
+	if !ok {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return 0
+	}
+	userID, ok := claims["user_id"].(float64)
+	if !ok {
+		http.Error(w, "Invalid token", http.StatusUnauthorized)
+		return 0
+	}
+
+	return int(userID)
+}
+
+type contextKey string
+
+const (
+	authContextKey contextKey = "auth"
+)
+
+func updateAddressHandler(w http.ResponseWriter, r *http.Request) {
+	// get user ID from JWT token
+	claims, ok := r.Context().Value(authContextKey).(jwt.MapClaims)
+	if !ok {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+	userID, ok := claims["user_id"].(float64)
+	if !ok {
+		http.Error(w, "invalid token", http.StatusUnauthorized)
+		return
+	}
+
+	// get address ID from URL path
+	vars := mux.Vars(r)
+	addressID, err := strconv.ParseUint(vars["id"], 10, 64)
+	if err != nil {
+		http.Error(w, "invalid address ID", http.StatusBadRequest)
+		return
+	}
+
+	// parse JSON request body into Address struct
+	var address Address
+	err = json.NewDecoder(r.Body).Decode(&address)
+	if err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	// validate user ID
+	if uint(userID) != address.UserID {
+		http.Error(w, "you are not authorized to update this address", http.StatusUnauthorized)
+		return
+	}
+
+	// update address in database
+	db, err := connectDB()
+	defer db.Close()
+
+	var existingAddress Address
+	err = db.Where("id = ?", addressID).First(&existingAddress).Error
+	if err != nil {
+		http.Error(w, "address not found", http.StatusNotFound)
+		return
+	}
+	existingAddress.Name = address.Name
+	existingAddress.Street = address.Street
+	existingAddress.City = address.City
+	existingAddress.Province = address.Province
+	existingAddress.Zipcode = address.Zipcode
+	err = db.Save(&existingAddress).Error
+	if err != nil {
+		http.Error(w, "failed to update address", http.StatusInternalServerError)
+		return
+	}
+
+	// return updated address in response
+	json.NewEncoder(w).Encode(existingAddress)
+}
+
+func deleteAddressHandler(w http.ResponseWriter, r *http.Request) {
+	// Dapatkan id dari URL parameter
+	vars := mux.Vars(r)
+	id := vars["id"]
+
+	// Inisialisasi objek model `Address`
+	var address Address
+
+	// Cari alamat dengan id yang diberikan dari database
+	if err := DB.First(&address, id).Error; err != nil {
+		// Jika alamat tidak ditemukan, kirim pesan kesalahan dengan status 404 Not Found
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, "Alamat dengan id %s tidak ditemukan", id)
+		return
+	}
+
+	// Hapus alamat dari database
+	if err := DB.Delete(&address).Error; err != nil {
+		// Jika terjadi masalah saat menghapus, kirim pesan kesalahan dengan status 500 Internal Server Error
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, "Gagal menghapus alamat dengan id %s: %v", id, err)
+		return
+	}
+
+	// Send a success response
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]string{"message": "Address deleted"})
+}
+
+func createCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	// Parse request body to Category struct
+	var category Category
+	err := json.NewDecoder(r.Body).Decode(&category)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Save Category to database using ORM
+	result := DB.Create(&category)
+	if result.Error != nil {
+		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return JSON response with created Category object
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(category)
+}
+
+func getCategoryListHandler(w http.ResponseWriter, r *http.Request) {
+	// Query all Category objects from database using ORM
+	var categories []Category
+	result := DB.Find(&categories)
+	if result.Error != nil {
+		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return JSON response with list of Category objects
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(categories)
+}
+
+func getCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	// Get category ID from URL path parameter
+	vars := mux.Vars(r)
+	categoryID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Query Category object from database using ORM
+	var category Category
+	result := DB.First(&category, categoryID)
+	if result.Error != nil {
+		http.Error(w, result.Error.Error(), http.StatusNotFound)
+		return
+	}
+
+	// Return JSON response with Category object
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(category)
+}
+
+func updateCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	// Get category ID from URL path parameter
+	vars := mux.Vars(r)
+	categoryID, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Parse request body to Category struct
+	var category Category
+	err = json.NewDecoder(r.Body).Decode(&category)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Update Category object in database using ORM
+	result := DB.Model(&Category{}).Where("id = ?", categoryID).Updates(category)
+	if result.Error != nil {
+		http.Error(w, result.Error.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return JSON response with updated Category object
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(category)
+}
+
+func deleteCategoryHandler(w http.ResponseWriter, r *http.Request) {
+	// ambil id kategori dari path parameter
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
+		return
+	}
+
+	// hapus kategori dari database
+	category := Category{ID: uint(id)}
+	if err := DB.Delete(&category).Error; err != nil {
+		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+		return
+	}
+
+	// kirim status sukses ke client
+	w.WriteHeader(http.StatusOK)
+}
+
+func createProductHandler(w http.ResponseWriter, r *http.Request) {
+	// Ambil data dari request body
+	var product Product
+	err := json.NewDecoder(r.Body).Decode(&product)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Lakukan validasi data produk
+	if product.Name == "" {
+		http.Error(w, "Product name is required", http.StatusBadRequest)
+		return
+	}
+
+	// Simpan data produk ke database
+	err = DB.Create(&product).Error
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Kirim response dengan data produk yang baru saja dibuat
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	err = json.NewEncoder(w).Encode(product)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func getProductListHandler(w http.ResponseWriter, r *http.Request) {
+	// Ambil data produk dari database
+	var products []Product
+	err := DB.Find(&products).Error
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Kirim response dengan data produk
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	err = json.NewEncoder(w).Encode(products)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func getProductHandler(w http.ResponseWriter, r *http.Request) {
+	// Ambil ID produk dari URL parameter
+	vars := mux.Vars(r)
+	id, err := strconv.Atoi(vars["id"])
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Ambil data produk dari database
+	var product Product
+	err = DB.First(&product, id).Error
+	if err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			http.Error(w, "Product not found", http.StatusNotFound)
 		} else {
-			respondWithError(w, http.StatusInternalServerError, "Failed to get address")
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 		return
 	}
 
-	// Respond with address
-	respondWithJSON(w, http.StatusOK, address)
+	// Kirim response dengan data produk
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	err = json.NewEncoder(w).Encode(product)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+}
+
+func updateProductHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	productID := vars["id"]
+
+	// Check if product exists
+	var product Product
+	result := DB.First(&product, productID)
+	if result.Error != nil {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, "Product not found")
+		return
+	}
+
+	// Decode request body into Product struct
+	var updatedProduct Product
+	err := json.NewDecoder(r.Body).Decode(&updatedProduct)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		fmt.Fprintf(w, "Invalid request payload")
+		return
+	}
+
+	// Update product fields
+	product.Name = updatedProduct.Name
+	product.Description = updatedProduct.Description
+	product.Price = updatedProduct.Price
+	product.Image = updatedProduct.Image
+	product.Stock = updatedProduct.Stock
+	product.UpdatedAt = time.Now()
+
+	// Save changes to database
+	DB.Save(&product)
+
+	// Return updated product as JSON
+	json.NewEncoder(w).Encode(&product)
+}
+
+func deleteProductHandler(w http.ResponseWriter, r *http.Request) {
+	vars := mux.Vars(r)
+	productID := vars["id"]
+
+	// Check if product exists
+	var product Product
+	result := DB.First(&product, productID)
+	if result.Error != nil {
+		w.WriteHeader(http.StatusNotFound)
+		fmt.Fprintf(w, "Product not found")
+		return
+	}
+
+	// Delete product from database
+	DB.Delete(&product)
+
+	// Return success message
+	fmt.Fprintf(w, "Product deleted")
+}
+
+func createTransactionHandler(w http.ResponseWriter, r *http.Request) {
+	// Parse request body to Transaction struct
+	var transaction Transaction
+	err := json.NewDecoder(r.Body).Decode(&transaction)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Insert transaction to database
+	err = DB.Create(&transaction).Error
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return success response
+	w.WriteHeader(http.StatusCreated)
+	json.NewEncoder(w).Encode(transaction)
+}
+
+func getTransactionListHandler(w http.ResponseWriter, r *http.Request) {
+	// Retrieve all transactions from database
+	var transactions []Transaction
+	err := DB.Find(&transactions).Error
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Return transactions as response
+	json.NewEncoder(w).Encode(transactions)
+}
+
+func getTransactionHandler(w http.ResponseWriter, r *http.Request) {
+	// Mendapatkan nilai id dari path parameter
+	vars := mux.Vars(r)
+	id, err := strconv.ParseUint(vars["id"], 10, 64)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Mencari transaksi dengan id yang sesuai dari database
+	var transaction Transaction
+	err = DB.First(&transaction, id).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Mengembalikan response dengan data transaksi yang ditemukan
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(transaction)
+}
+
+func confirmTransactionHandler(w http.ResponseWriter, r *http.Request) {
+	// Mendapatkan nilai id dari path parameter
+	vars := mux.Vars(r)
+	id, err := strconv.ParseUint(vars["id"], 10, 64)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
+
+	// Mencari transaksi dengan id yang sesuai dari database
+	var transaction Transaction
+	err = DB.First(&transaction, id).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Mengubah status transaksi menjadi "confirmed"
+	transaction.Status = "confirmed"
+	err = DB.Save(&transaction).Error
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		return
+	}
+
+	// Mengembalikan response dengan data transaksi yang telah diubah statusnya
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(transaction)
 }
